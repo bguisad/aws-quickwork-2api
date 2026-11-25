@@ -18,6 +18,7 @@ import (
 	"quickwork-openai/internal/admin"
 	"quickwork-openai/internal/config"
 	"quickwork-openai/internal/oauth"
+	"quickwork-openai/internal/outbound"
 	"quickwork-openai/internal/proxy"
 	"quickwork-openai/internal/store"
 )
@@ -61,7 +62,7 @@ Usage:
   quickproxy server   [-config config.json] [-addr 127.0.0.1:8080]
   quickproxy login    [-config config.json] [-provider social|enterprise|gateway|social_gateway]
                       [-stage prod|beta|integ|dev] [-region REGION] [-port 18080]
-                      [-timeout 1h] [-open] [-manual]
+                      [-timeout 1h] [-open] [-manual] [-proxy-id ID|direct]
   quickproxy accounts [-config config.json]
   quickproxy refresh  [-config config.json] [-account ID]
   quickproxy logout   [-config config.json] (-all | -account ID)
@@ -83,6 +84,11 @@ func openStore(cfg *config.Config) (*store.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: %w", cfg.Database, err)
 	}
+	cfg.Proxies = outbound.New(st, cfg.ProxyID)
+	if !cfg.Proxies.Has("") {
+		st.Close()
+		return nil, errors.New("default proxy_id is not available in the database")
+	}
 	return st, nil
 }
 
@@ -103,6 +109,7 @@ func runServer(args []string) int {
 		return 1
 	}
 	defer st.Close()
+	defer cfg.Proxies.CloseIdleConnections()
 
 	mgr := accounts.New(st, cfg)
 	count, _ := mgr.EnabledCount(context.Background())
@@ -177,6 +184,7 @@ func login(args []string) int {
 	timeout := fs.Duration("timeout", 0, "wait duration for the browser callback (default from config)")
 	open := fs.Bool("open", false, "open the login URL in the default browser")
 	manual := fs.Bool("manual", false, "paste browser callback URLs manually (for servers without a reachable localhost)")
+	proxyID := fs.String("proxy-id", "", "stored proxy ID, direct, or empty to inherit the default")
 	_ = fs.Parse(args)
 
 	cfg, err := loadConfig(*configPath)
@@ -190,6 +198,7 @@ func login(args []string) int {
 		return 1
 	}
 	defer st.Close()
+	defer cfg.Proxies.CloseIdleConnections()
 
 	if *provider == "" {
 		*provider = cfg.OAuth.Provider
@@ -211,6 +220,8 @@ func login(args []string) int {
 		Provider:    *provider,
 		Stage:       *stage,
 		Region:      *region,
+		ProxyID:     *proxyID,
+		Proxies:     cfg.Proxies,
 		Port:        *port,
 		Timeout:     *timeout,
 		AppVersion:  cfg.AppVersion,
@@ -310,6 +321,7 @@ func refreshAccounts(args []string) int {
 		return 1
 	}
 	defer st.Close()
+	defer cfg.Proxies.CloseIdleConnections()
 
 	mgr := accounts.New(st, cfg)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
