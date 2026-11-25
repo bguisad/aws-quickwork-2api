@@ -18,6 +18,7 @@ A single Go executable handles native OAuth / PKCE login, SQLite account storage
 - Embedded English / Simplified Chinese WebUI: overview, account management, browser-based remote login, configuration editing, and a non-streaming Playground.
 - Management sessions with HttpOnly cookies, CSRF protection, origin checks, and login rate limiting.
 - Multi-stage Docker image and hardened Compose deployment with persistent configuration and accounts.
+- WebUI bulk import of HTTP / SOCKS5 proxies, SQLite persistence, and per-account outbound routing.
 - Upstream session reuse with pinned accounts and incremental conversation history; explicit `X-Conversation-Id` / `X-Thread-Id` support.
 - Client-side tool bridging for `tools`, `functions`, `tool_choice`, and parallel calls. The proxy returns OpenAI `tool_calls`; it never executes tools.
 - Upstream usage reporting, including `prompt_tokens_details.cached_tokens`.
@@ -32,6 +33,8 @@ A single Go executable handles native OAuth / PKCE login, SQLite account storage
 - A browser. Automatic CLI callbacks require it to reach the CLI machine's callback port, normally `18080`; WebUI and `login -manual` do not.
 
 ## Quick Start
+
+Download the **v0.5.0** binary for your OS and CPU from [Releases](https://github.com/jasonxu114514/aws-quickwork-2api/releases/tag/v0.5.0), or build from source. Windows, Linux, and macOS binaries are provided for amd64 and arm64. Verify downloads against `SHA256SUMS`; `quickproxy version` reports the embedded version and commit. See [release notes](CHANGELOG.md).
 
 ### 1. Build
 
@@ -126,11 +129,16 @@ for chunk in client.chat.completions.create(
 
 The repository includes a multi-stage `Dockerfile`, `compose.yaml`, and an allowlist-based `.dockerignore`. Only module files, required Go sources, and embedded UI assets enter the build context—not local configuration, databases, or login state.
 
-Set `QUICKPROXY_ADMIN_PASSWORD` in your deployment environment first, then run:
+Set `QUICKPROXY_ADMIN_PASSWORD` in your deployment environment first, then pull and run the published image:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d --no-build
 ```
+
+Compose defaults to `ghcr.io/jasonxu114514/aws-quickwork-2api:v0.5.0`, with Linux amd64 and arm64 images. The registry also provides `0.5.0`, `0.5`, and `latest` tags. Override `QUICKPROXY_IMAGE` to pin another tag or the immutable digest recorded in the release's `container-image.txt`. Docker Hub credentials are not required for public GHCR pulls.
+
+To build the checked-out source instead, run `docker compose up -d --build`. Local builds use `QUICKPROXY_VERSION` for version metadata (default `v0.5.0`); this does not choose a Git revision. For standalone builds, use `docker build --build-arg VERSION=v0.5.0 -t quickwork-openai:local .`.
 
 Open `http://127.0.0.1:8080/`, sign in with the administrator password, and add upstream accounts from the Accounts page. `QUICKPROXY_PORT` changes the published host port; the container still listens on `0.0.0.0:8080`. Compose publishes to the host's loopback interface by default.
 
@@ -139,6 +147,7 @@ Deployment details:
 - Named volume `quickproxy-data` mounts at `/app/data`; first use creates `/app/data/config.json`.
 - Relative database paths resolve against the configuration directory. The default database is therefore **`/app/data/data/quickwork.db`**. Set `database` to `quickwork.db` and restart to use `/app/data/quickwork.db` instead.
 - Existing configuration and account data survive image rebuilds and restarts. Do not remove the volume during upgrades.
+- Back up the configuration and SQLite database before upgrading; schema changes are applied automatically at startup. Proxy inventory and bindings share the same database and volume.
 - The process runs as UID/GID `10001:10001`. A bind-mounted data directory must already be writable by this user.
 - Compose uses a read-only root filesystem, drops all Linux capabilities, enables `no-new-privileges`, and provides a temporary `/tmp`.
 - The health check calls only `/healthz` inside the container; it does not contact the upstream service or require accounts.
@@ -162,6 +171,12 @@ To build the image separately:
 ```bash
 docker build -t quickwork-openai:local .
 ```
+
+### CI and Releases
+
+The `ci` workflow compiles Go, runs `go vet`, checks formatting of changed Go sources and JavaScript syntax, and builds both Linux container architectures on native GitHub runners. It does not run the application, probe proxy endpoints, or perform smoke tests.
+
+Pushing a stable `vMAJOR.MINOR.PATCH` tag starts `release`. Manual dispatch requires an existing tag in the `tag` input. The workflow pins the tag's commit for every build, produces six binaries and multi-platform GHCR images, and publishes the GitHub Release after all distribution builds succeed. The registry path is derived from the repository name; publication uses the workflow's `GITHUB_TOKEN` with job-scoped `packages: write`, without a separate registry secret. All third-party Actions are pinned to commit SHAs. A failed run can be rerun for the same tag without moving it.
 
 ## WebUI
 
@@ -344,6 +359,7 @@ Configure inference keys in `api_keys`, then send an allowed key using `Authoriz
 | `quickproxy refresh -account ID` | Refresh one account |
 | `quickproxy logout -all` | Delete all local accounts |
 | `quickproxy logout -account ID` | Delete one local account |
+| `quickproxy version` | Show the build version and source commit without loading configuration |
 
 All commands accept `-config PATH`, defaulting to `config.json`. Running without a subcommand starts the server.
 

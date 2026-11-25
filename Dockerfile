@@ -1,19 +1,31 @@
-FROM golang:1.26.3-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.3-alpine AS build
 
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 
 ARG TARGETOS=linux
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/quickproxy ./cmd/quickproxy
+ARG VERSION=dev
+ARG COMMIT=unknown
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+    -o /out/quickproxy ./cmd/quickproxy
 
 FROM alpine:3.23
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+LABEL org.opencontainers.image.title="QuickWork / Amazon Quick to OpenAI API" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.licenses="GPL-3.0-only"
 
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -g 10001 quickproxy \

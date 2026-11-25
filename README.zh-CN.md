@@ -22,6 +22,7 @@
 - WebUI 支持 English / 简体中文切换；界面语言不改变上游请求的 `locale` 配置
 - 独立管理密码、HttpOnly 会话 Cookie、CSRF 防护和登录限流；管理密码与推理 API key 分离
 - Docker 多阶段构建与 Compose 部署，非 root 运行并持久化账号和配置
+- WebUI 批量导入 HTTP / SOCKS5 代理，SQLite 持久化，支持逐账号出站绑定
 - 默认复用上游会话（`session_reuse=true`）；设为 `false` 时每轮结束删除会话，避免污染聊天列表
 - 会话复用：同一段对话固定上游 thread 与账号，每轮只送新增消息，避免重送整份 transcript 撞 64 KB 上限；可用 `X-Conversation-Id` / `X-Thread-Id` 显式指定会话
 - 客户端 `tools` / `functions` 通过 `<caller_tool_interface>` 文本协议桥接；代理解析 `<client_tool_call>` 并返回 OpenAI `tool_calls`，实际执行仍在客户端
@@ -41,6 +42,8 @@
 - 不需要 Python、Node.js、npm、官方桌面应用或 outpost 进程
 
 ## 快速开始
+
+可直接从 [Releases](https://github.com/jasonxu114514/aws-quickwork-2api/releases/tag/v0.5.0) 下载 **v0.5.0**，或从源码构建。提供 Windows / Linux / macOS 的 amd64、arm64 二进制；下载后用 `SHA256SUMS` 核对完整性，执行 `quickproxy version` 查看内嵌版本与提交。更新内容见 [发行说明](CHANGELOG.md)。
 
 ### 1. 构建
 
@@ -146,11 +149,16 @@ for chunk in client.chat.completions.create(
 
 仓库提供 `Dockerfile`、`compose.yaml` 和白名单式 `.dockerignore`。构建上下文只包含 Go 源码、模块文件和内嵌 WebUI 资源，不包含本地配置、数据库或登录状态。
 
-先通过部署环境设置 `QUICKPROXY_ADMIN_PASSWORD`（12–1024 字节），然后在项目目录运行：
+先通过部署环境设置 `QUICKPROXY_ADMIN_PASSWORD`（12–1024 字节），然后在项目目录拉取并启动已发布镜像：
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d --no-build
 ```
+
+Compose 默认使用 `ghcr.io/jasonxu114514/aws-quickwork-2api:v0.5.0`，支持 Linux amd64、arm64；同时提供 `0.5.0`、`0.5`、`latest` 标签。可用 `QUICKPROXY_IMAGE` 指定其他标签，或使用 Release 的 `container-image.txt` 中记录的不可变 digest。公开 GHCR 镜像拉取不需要 Docker Hub 账号。
+
+如需构建当前检出的源码，运行 `docker compose up -d --build`。本地构建的 `QUICKPROXY_VERSION` 仅控制版本元数据，默认 `v0.5.0`，不会切换 Git 提交。独立构建可用 `docker build --build-arg VERSION=v0.5.0 -t quickwork-openai:local .`。
 
 打开 `http://127.0.0.1:8080/`，使用管理密码登录，再在账号页面添加上游账号。Compose 默认只把容器端口发布到主机 loopback；可通过 `QUICKPROXY_PORT` 修改主机端口。容器内仍监听 `0.0.0.0:8080`。
 
@@ -159,6 +167,7 @@ docker compose up -d --build
 - 命名卷 `quickproxy-data` 挂载到 `/app/data`；首次运行生成 `/app/data/config.json`。
 - 默认数据库相对配置文件目录解析，因此容器内路径为 `/app/data/data/quickwork.db`；如希望改为 `/app/data/quickwork.db`，把配置中的 `database` 设置为 `quickwork.db` 后重启。
 - 已有配置和数据库不会在重新构建镜像或重启时覆盖；不要用删除卷的方式升级。
+- 升级前备份配置与 SQLite 数据库，启动时自动迁移 schema；代理列表及绑定同样保存在此数据库与数据卷内。
 - 进程以 UID/GID `10001:10001` 运行。使用 bind mount 替代命名卷时，需要预先授予该用户数据目录写权限。
 - Compose 使用只读根文件系统、丢弃全部 Linux capabilities、`no-new-privileges` 和临时 `/tmp`。
 - 健康检查只调用容器内 `/healthz`，不会访问上游，也不要求已有账号。
@@ -182,6 +191,12 @@ docker compose restart quickproxy
 ```bash
 docker build -t quickwork-openai:local .
 ```
+
+### CI 与发布
+
+`ci` 工作流编译 Go、运行 `go vet`、检查本次变更 Go 源码的格式和 JavaScript 语法，并在 GitHub 原生 runner 上分别构建两种 Linux 架构的容器镜像。不启动应用、不探测代理、不执行 smoke test。
+
+推送稳定版 `vMAJOR.MINOR.PATCH` 标签触发 `release`；手动触发必须在 `tag` 输入中指定已有标签。所有构建固定到该标签提交，生成六个平台二进制及 GHCR 多架构镜像，全部完成后才发布 GitHub Release。镜像路径由仓库名生成，工作流使用按任务授予 `packages: write` 的 `GITHUB_TOKEN` 发布，无需另配仓库密码。第三方 Actions 均固定到 commit SHA。失败后可重跑同一标签，无需移动标签。
 
 ## WebUI
 
@@ -374,6 +389,7 @@ socks5://USER:PASS@proxy.example.com:1080
 | `quickproxy refresh -account ID` | 只刷新一个账号 |
 | `quickproxy logout -all` | 删除全部账号 |
 | `quickproxy logout -account ID` | 删除一个账号 |
+| `quickproxy version` | 显示构建版本与源码提交，不读取配置 |
 
 所有命令都支持 `-config PATH`，默认 `config.json`。
 

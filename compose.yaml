@@ -1,8 +1,10 @@
 services:
   quickproxy:
-    image: quickwork-openai:local
+    image: "${QUICKPROXY_IMAGE:-ghcr.io/jasonxu114514/aws-quickwork-2api:v0.5.0}"
     build:
       context: .
+      args:
+        VERSION: "${QUICKPROXY_VERSION:-v0.5.0}"
     restart: unless-stopped
     environment:
       QUICKPROXY_ADMIN_PASSWORD: "${QUICKPROXY_ADMIN_PASSWORD:?Set QUICKPROXY_ADMIN_PASSWORD to a password of at least 12 characters}"

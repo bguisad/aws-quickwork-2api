@@ -17,6 +17,8 @@
 !internal/config/*.go
 !internal/oauth/
 !internal/oauth/*.go
+!internal/outbound/
+!internal/outbound/*.go
 !internal/proxy/
 !internal/proxy/*.go
 !internal/store/

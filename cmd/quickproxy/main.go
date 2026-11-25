@@ -23,6 +23,11 @@ import (
 	"quickwork-openai/internal/store"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -32,6 +37,9 @@ func run(args []string) int {
 		return runServer(nil)
 	}
 	switch args[0] {
+	case "version", "-version", "--version":
+		fmt.Printf("quickproxy %s (commit %s)\n", version, commit)
+		return 0
 	case "server":
 		return runServer(args[1:])
 	case "login":
@@ -66,6 +74,7 @@ Usage:
   quickproxy accounts [-config config.json]
   quickproxy refresh  [-config config.json] [-account ID]
   quickproxy logout   [-config config.json] (-all | -account ID)
+  quickproxy version
 
 Running without a subcommand is equivalent to "server".
 
